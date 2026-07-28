@@ -1,0 +1,116 @@
+# Tautulli Remote push relay.
+#
+# The top-level configuration is the STAGING deployment (`npm run deploy:staging`),
+# served from workers.dev. Production (`npm run deploy:production`) is the
+# [env.production] section below, bound to relay.tautulliremote.com.
+#
+# Secrets (set per environment, never committed):
+#   wrangler secret put FCM_SERVICE_ACCOUNT                  # staging
+#   wrangler secret put FCM_SERVICE_ACCOUNT --env production # production
+# The value is the full Firebase service-account JSON (project plexpy-remote,
+# role: Firebase Cloud Messaging API Sender).
+
+name = "tautulli-remote-relay-staging"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+workers_dev = true
+
+[observability]
+enabled = true
+
+# DAILY_LIMIT: per-device daily notification cap.
+# "0" (or unset) = monitor mode: usage is counted and recorded, nothing is refused.
+# A positive integer = enforced cap, effective immediately on deploy.
+[vars]
+DAILY_LIMIT = "0"
+
+[[durable_objects.bindings]]
+name = "QUOTA"
+class_name = "QuotaCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["QuotaCounter"]
+
+# Per-device daily-count distribution (hashed token prefix + count only) used to
+# choose the eventual DAILY_LIMIT value. Queryable with the Analytics Engine SQL API.
+[[analytics_engine_datasets]]
+binding = "USAGE"
+dataset = "tautulli_relay_usage_staging"
+
+# Rate limiters. Requires wrangler >= 4.36.0 (the [[ratelimits]] key).
+# `period` accepts only 10 or 60 seconds.
+#
+# NOTIFY_IP_LIMIT is the one that bounds flooding: the token-keyed burst guard
+# alone gives every fresh (junk) token its own budget, so only a per-IP ceiling
+# caps an unauthenticated caller. Sized well above any real Tautulli server,
+# which sends a handful of notifications per minute.
+[[ratelimits]]
+name = "NOTIFY_IP_LIMIT"
+namespace_id = "1000"
+simple = { limit = 300, period = 60 }
+
+# Burst guard: per-token-hash, applied to /v1/notify before the quota counter.
+[[ratelimits]]
+name = "NOTIFY_BURST"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
+# Per-IP limit for /v1/validate and /v1/quota.
+[[ratelimits]]
+name = "LOOKUP_LIMIT"
+namespace_id = "1002"
+simple = { limit = 20, period = 60 }
+
+# Optional OAuth token cache shared across isolates. The relay works without it
+# (in-memory caching only); create a KV namespace and fill in the id to enable:
+#   wrangler kv namespace create OAUTH_CACHE
+# [[kv_namespaces]]
+# binding = "OAUTH_CACHE"
+# id = "<namespace id>"
+
+# ---------------------------------------------------------------------------
+# Production: relay.tautulliremote.com
+# Wrangler environments do not inherit bindings, so everything is repeated.
+# ---------------------------------------------------------------------------
+[env.production]
+name = "tautulli-remote-relay"
+workers_dev = false
+routes = [{ pattern = "relay.tautulliremote.com", custom_domain = true }]
+
+[env.production.observability]
+enabled = true
+
+[env.production.vars]
+DAILY_LIMIT = "0"
+
+[[env.production.durable_objects.bindings]]
+name = "QUOTA"
+class_name = "QuotaCounter"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["QuotaCounter"]
+
+[[env.production.analytics_engine_datasets]]
+binding = "USAGE"
+dataset = "tautulli_relay_usage"
+
+[[env.production.ratelimits]]
+name = "NOTIFY_IP_LIMIT"
+namespace_id = "2000"
+simple = { limit = 300, period = 60 }
+
+[[env.production.ratelimits]]
+name = "NOTIFY_BURST"
+namespace_id = "2001"
+simple = { limit = 30, period = 60 }
+
+[[env.production.ratelimits]]
+name = "LOOKUP_LIMIT"
+namespace_id = "2002"
+simple = { limit = 20, period = 60 }
+
+# [[env.production.kv_namespaces]]
+# binding = "OAUTH_CACHE"
+# id = "<namespace id>"

@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+dist/
+
+# Local secrets — the FCM service account must never enter this repo.
+.dev.vars
+.dev.vars.*
+*service-account*.json
+*.pem
