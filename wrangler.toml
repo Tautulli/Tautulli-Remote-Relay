@@ -56,11 +56,16 @@ name = "NOTIFY_BURST"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
-# Per-IP limit for /v1/validate and /v1/quota.
+# Per-IP limit for /v1/validate and /v1/quota. Sized for the legitimate burst
+# these endpoints see: one Tautulli server revalidating a long device list, which
+# paces itself well below this. Refusing a validation is the costly direction —
+# a 429 says nothing about the token, so the server can only leave the device's
+# state as it found it. Still far below the dry-run rate one IP could otherwise
+# drive at FCM, and a fifth of the /v1/notify per-IP ceiling.
 [[ratelimits]]
 name = "LOOKUP_LIMIT"
 namespace_id = "1002"
-simple = { limit = 20, period = 60 }
+simple = { limit = 60, period = 60 }
 
 # Optional OAuth token cache shared across isolates. The relay works without it
 # (in-memory caching only); create a KV namespace and fill in the id to enable:
@@ -109,7 +114,7 @@ simple = { limit = 30, period = 60 }
 [[env.production.ratelimits]]
 name = "LOOKUP_LIMIT"
 namespace_id = "2002"
-simple = { limit = 20, period = 60 }
+simple = { limit = 60, period = 60 }
 
 # [[env.production.kv_namespaces]]
 # binding = "OAUTH_CACHE"
