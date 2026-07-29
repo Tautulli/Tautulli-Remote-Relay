@@ -119,7 +119,7 @@ describe('POST /v1/notify — delivery', () => {
 
     const request = lastCaptured(captured);
     expect(request.message.token).toBe(TEST_TOKEN);
-    expect(request.message.android).toEqual({ priority: 'HIGH' });
+    expect(request.message.android).toEqual({ priority: 'HIGH', ttl: '259200s' });
     expect(request.message.apns).toBeUndefined();
     expect(request.message.notification).toBeUndefined();
     expect(JSON.parse(request.message.data.payload)).toEqual(TEST_DATA);
@@ -134,7 +134,12 @@ describe('POST /v1/notify — delivery', () => {
     expect(response.status).toBe(200);
 
     const request = lastCaptured(captured);
-    expect(request.message.apns.headers).toEqual({ 'apns-priority': '10', 'apns-push-type': 'alert' });
+    expect(request.message.apns.headers).toMatchObject({ 'apns-priority': '10', 'apns-push-type': 'alert' });
+    // The expiration keeps stale notifications from flooding a device that was
+    // off for days: roughly now + 3 days, expressed in epoch seconds.
+    const expiration = Number(request.message.apns.headers['apns-expiration']);
+    const expected = Date.now() / 1000 + 259200;
+    expect(Math.abs(expiration - expected)).toBeLessThan(120);
     expect(request.message.apns.payload.aps).toEqual({
       alert: { body: 'Tautulli Notification' },
       sound: 'default',

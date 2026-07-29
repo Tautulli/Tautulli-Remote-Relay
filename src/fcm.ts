@@ -213,6 +213,14 @@ async function invalidateAccessToken(env: Env): Promise<void> {
 }
 
 /**
+ * How long an undelivered notification stays queued for an offline device.
+ * Matches the OneSignal default the app migrated from; FCM's own default is
+ * 28 days, which would greet a device that was off for a week with a flood of
+ * stale playback notifications.
+ */
+const MESSAGE_LIFETIME_SECONDS = 3 * 24 * 60 * 60;
+
+/**
  * Build the FCM v1 message. The Tautulli `data` dict rides as a single JSON
  * string under the `payload` key: FCM coerces data-map values to strings, and
  * one blob keeps the typed fields (`encrypted`, `version`) intact for the
@@ -226,11 +234,16 @@ async function invalidateAccessToken(env: Env): Promise<void> {
 export function buildMessage(token: string, platform: Platform, data: Record<string, unknown>): Record<string, unknown> {
   const payload = JSON.stringify(data);
   if (platform === 'ios') {
+    const expiration = Math.floor(Date.now() / 1000) + MESSAGE_LIFETIME_SECONDS;
     return {
       token,
       data: { payload },
       apns: {
-        headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+        headers: {
+          'apns-priority': '10',
+          'apns-push-type': 'alert',
+          'apns-expiration': String(expiration),
+        },
         payload: {
           aps: {
             alert: { body: 'Tautulli Notification' },
@@ -244,7 +257,7 @@ export function buildMessage(token: string, platform: Platform, data: Record<str
   return {
     token,
     data: { payload },
-    android: { priority: 'HIGH' },
+    android: { priority: 'HIGH', ttl: `${MESSAGE_LIFETIME_SECONDS}s` },
   };
 }
 
