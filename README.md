@@ -54,7 +54,7 @@ Returns `200 {status: "ok", rateLimits: {enforced, maximum}, limitersConfigured}
 
 ## Deploying
 
-Requires a Cloudflare account on the Workers paid plan (Durable Objects), wrangler >= 4.36 (the `[[ratelimits]]` config key), and a Firebase project with the app configured (for iOS, the APNs auth key uploaded under Cloud Messaging settings).
+Requires a Cloudflare account (the free plan works: the quota counters are SQLite-backed Durable Objects, which — like Analytics Engine — are included on Workers Free; the $5/month paid plan lifts the 100k/day request and write caps), wrangler >= 4.36 (the `[[ratelimits]]` config key), and a Firebase project with the app configured (for iOS, the APNs auth key uploaded under Cloud Messaging settings).
 
 ```bash
 npm install
