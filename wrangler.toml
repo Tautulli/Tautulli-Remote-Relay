@@ -18,8 +18,15 @@ compatibility_date = "2026-07-01"
 # request budget as production. Flip to true only while actively testing staging.
 workers_dev = false
 
+# invocation_logs off: the automatic per-request record carries the client IP,
+# and the consent text in the app promises IP addresses are never recorded.
+# console.log output is unaffected, so the per-device lines support relies on are
+# still here, as is the Analytics Engine usage dataset the fair use cap is set from.
 [observability]
 enabled = true
+
+[observability.logs]
+invocation_logs = false
 
 # DAILY_LIMIT: per-device daily notification cap.
 # "0" (or unset) = monitor mode: usage is counted and recorded, nothing is refused.
@@ -88,6 +95,9 @@ routes = [{ pattern = "relay.tautulliremote.com", custom_domain = true }]
 
 [env.production.observability]
 enabled = true
+
+[env.production.observability.logs]
+invocation_logs = false
 
 [env.production.vars]
 DAILY_LIMIT = "0"
