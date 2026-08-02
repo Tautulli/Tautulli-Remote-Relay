@@ -13,7 +13,10 @@
 name = "tautulli-remote-relay-staging"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
-workers_dev = true
+# Off by default. A workers.dev URL is outside the zone, so no WAF rule, rate
+# limiting rule or cache rule can reach it, yet it draws on the same account
+# request budget as production. Flip to true only while actively testing staging.
+workers_dev = false
 
 [observability]
 enabled = true
