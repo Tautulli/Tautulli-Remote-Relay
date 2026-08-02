@@ -59,7 +59,15 @@ describe('POST /v1/notify — validation', () => {
   });
 
   it('rejects CORS-simple content types so cross-origin POSTs need a preflight', async () => {
-    for (const contentType of ['text/plain;charset=UTF-8', 'application/x-www-form-urlencoded', 'multipart/form-data']) {
+    for (const contentType of [
+      'text/plain;charset=UTF-8',
+      'application/x-www-form-urlencoded',
+      'multipart/form-data',
+      // Essence is CORS-safelisted, so these need no preflight; a substring
+      // search for the JSON type lets them straight through.
+      'multipart/form-data; boundary=application/json',
+      'text/plain; charset=application/json',
+    ]) {
       const response = await SELF.fetch('https://relay.test/v1/notify', {
         method: 'POST',
         headers: { 'Content-Type': contentType },
@@ -76,6 +84,43 @@ describe('POST /v1/notify — validation', () => {
       body: JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: { blob: 'x'.repeat(64 * 1024) } }),
     });
     expect(response.status).toBe(413);
+  });
+
+  it('rejects a streamed body, which declares no Content-Length at all', async () => {
+    // The size guard can only be trusted if an undeclared body is refused: a
+    // chunked/streamed request is exactly how a caller avoids declaring one.
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA })),
+        );
+        controller.close();
+      },
+    });
+    const response = await SELF.fetch('https://relay.test/v1/notify', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(response.status).toBe(413);
+  });
+
+  it('keys the per-IP limiter on the /64 so one prefix cannot mint budgets', async () => {
+    // Two hosts in one prefix share a bucket, and an IPv4 address is untouched.
+    // All three are well under the limit, so this asserts the key is computed
+    // without error rather than that a limit fired.
+    mockOauth();
+    mockFcm(200, { name: 'projects/relay-test-project/messages/1' }, 3);
+    const send = (ip: string) =>
+      SELF.fetch('https://relay.test/v1/notify', {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, 'CF-Connecting-IP': ip },
+        body: JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA }),
+      });
+    expect((await send('2001:db8:1:2:3:4:5:6')).status).toBe(200);
+    expect((await send('2001:db8:1:2:aaaa:bbbb:cc:dd')).status).toBe(200);
+    expect((await send('203.0.113.7')).status).toBe(200);
   });
 
   it('rejects a missing or short token', async () => {

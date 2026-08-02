@@ -52,19 +52,36 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 /**
- * Read and parse the JSON body, but only after cheap gates: the request must
- * declare JSON (which forces a CORS preflight for cross-origin callers, so a
- * page cannot launder no-preflight POSTs through a visitor's IP), and its
- * declared size must be within the cap (so an unauthenticated caller cannot
- * make the Worker buffer and parse multi-megabyte bodies).
+ * Require the request to declare JSON, which forces a CORS preflight for
+ * cross-origin callers so a page cannot launder no-preflight POSTs through a
+ * visitor's IP.
+ *
+ * Compares the MIME *essence* rather than searching the header. A substring
+ * test accepts `multipart/form-data; boundary=application/json`, whose essence
+ * is CORS-safelisted, and so admits exactly the requests this is meant to keep
+ * out. Callers run this before touching a rate limiter, so a rejected
+ * cross-origin POST costs the visitor's IP budget nothing.
  */
-async function readJsonBody(request: Request): Promise<unknown> {
-  const contentType = request.headers.get('Content-Type') ?? '';
-  if (!contentType.toLowerCase().includes('application/json')) {
+function assertJsonRequest(request: Request): void {
+  const essence = (request.headers.get('Content-Type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (essence !== 'application/json') {
     throw new SchemaError('Content-Type must be application/json');
   }
-  const contentLength = Number(request.headers.get('Content-Length') ?? '');
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+}
+
+/**
+ * Read and parse the JSON body, refusing one larger than the cap so an
+ * unauthenticated caller cannot make the Worker buffer and parse multi-megabyte
+ * bodies.
+ *
+ * A missing or unparsable Content-Length is treated as over the cap rather than
+ * waved through: `Number('')` is 0 and `Number.isFinite(NaN)` is false, so
+ * trusting the header only rejects a caller honest enough to declare the size.
+ */
+async function readJsonBody(request: Request): Promise<unknown> {
+  const declared = request.headers.get('Content-Length')?.trim();
+  const contentLength = declared ? Number(declared) : NaN;
+  if (!Number.isInteger(contentLength) || contentLength < 0 || contentLength > MAX_BODY_BYTES) {
     throw new PayloadTooLargeError(`request body exceeds ${MAX_BODY_BYTES} bytes`);
   }
   try {
@@ -82,8 +99,30 @@ async function checkLimiter(limiter: RateLimiter | undefined, key: string): Prom
   return success;
 }
 
+/**
+ * The rate-limit key for a request.
+ *
+ * IPv6 is truncated to its /64. A single routed prefix is the normal unit of
+ * allocation from any VPS host, so keying on the full address hands one
+ * attacker 2^64 independent budgets and makes the per-IP ceiling — the only
+ * control that bounds an unauthenticated caller — mean nothing.
+ */
 function clientIp(request: Request): string {
-  return request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  // A dot means IPv4, plain or IPv4-mapped; truncating those would put every
+  // IPv4 client in one bucket, which is the opposite of the fix.
+  if (!ip.includes(':') || ip.includes('.')) {
+    return ip;
+  }
+  // Expand an elided run so the first four groups are the real /64.
+  const [head, tail = ''] = ip.split('::');
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = tail ? tail.split(':') : [];
+  const missing = 8 - headGroups.length - tailGroups.length;
+  const groups = ip.includes('::')
+    ? [...headGroups, ...Array<string>(Math.max(missing, 0)).fill('0'), ...tailGroups]
+    : ip.split(':');
+  return groups.slice(0, 4).join(':') + '::/64';
 }
 
 function secondsUntil(isoTimestamp: string): number {
@@ -103,6 +142,7 @@ function quotaStub(env: Env, tokenHash: string): DurableObjectStub<QuotaCounter>
 }
 
 async function handleNotify(request: Request, env: Env): Promise<Response> {
+  assertJsonRequest(request);
   // Per-IP limit FIRST: the token-keyed burst guard alone bounds nothing
   // against junk tokens (each fresh token gets a fresh budget), so an IP limit
   // is what caps flooding of an endpoint that calls FCM.
@@ -150,6 +190,7 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleValidate(request: Request, env: Env): Promise<Response> {
+  assertJsonRequest(request);
   if (!(await checkLimiter(env.LOOKUP_LIMIT, clientIp(request)))) {
     return rateLimited('per-IP request limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
@@ -165,6 +206,7 @@ async function handleValidate(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleQuota(request: Request, env: Env): Promise<Response> {
+  assertJsonRequest(request);
   if (!(await checkLimiter(env.LOOKUP_LIMIT, clientIp(request)))) {
     return rateLimited('per-IP request limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
