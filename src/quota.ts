@@ -33,7 +33,7 @@ export interface QuotaDecision extends RateLimits {
 }
 
 /** Length of the hashed-token prefix reported to Analytics Engine. */
-const USAGE_ID_PREFIX_LENGTH = 16;
+export const USAGE_ID_PREFIX_LENGTH = 16;
 /** Spread post-midnight flush alarms over this window to avoid a thundering herd. */
 const ALARM_JITTER_WINDOW_MS = 10 * 60 * 1000;
 

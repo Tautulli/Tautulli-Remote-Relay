@@ -7,7 +7,7 @@ import {
   parseQuotaRequest,
   parseValidateRequest,
 } from './schema';
-import { QuotaCounter, parseDailyLimit } from './quota';
+import { QuotaCounter, USAGE_ID_PREFIX_LENGTH, parseDailyLimit } from './quota';
 import type { QuotaDecision } from './quota';
 import type { Env, RateLimits, RateLimiter } from './types';
 
@@ -152,7 +152,9 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
 
   const { token, platform, data } = parseNotifyRequest(await readJsonBody(request));
   const tokenHash = await sha256Hex(token);
-  const hashPrefix = tokenHash.slice(0, 8);
+  // Sixteen to match the usage dataset and the id the app shows a user, so a
+  // support report, a log line and a usage row all name the device identically.
+  const hashPrefix = tokenHash.slice(0, USAGE_ID_PREFIX_LENGTH);
 
   if (!(await checkLimiter(env.NOTIFY_BURST, tokenHash))) {
     return rateLimited('burst limit exceeded', BURST_RETRY_AFTER_SECONDS);
