@@ -2,6 +2,7 @@
   "name": "tautulli-remote-relay",
   "version": "1.0.0",
   "description": "Stateless push notification relay for Tautulli Remote: forwards encrypted notification payloads from Tautulli servers to devices via Firebase Cloud Messaging.",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "scripts": {
