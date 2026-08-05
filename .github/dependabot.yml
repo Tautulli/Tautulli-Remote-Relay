@@ -1,0 +1,26 @@
+version: 2
+
+# The workflow pins actions to commit SHAs, which cannot be repointed but also
+# never pick up a fix on their own. These updates are what unfreezes them: a PR
+# per bump, rewriting the SHA and the version comment beside it.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: deps
+    groups:
+      # wrangler, vitest and the workers types move together; separate PRs for
+      # them tend to fail against each other.
+      cloudflare:
+        patterns:
+          - wrangler
+          - '@cloudflare/*'
