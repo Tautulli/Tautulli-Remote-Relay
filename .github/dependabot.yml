@@ -27,17 +27,30 @@ updates:
           - wrangler
           - vitest
           - '@cloudflare/*'
-    # @cloudflare/vitest-pool-workers 0.20 dropped its "/config" export and with
-    # it defineWorkersProject, which all three vitest configs import, and moved
-    # the cloudflare:test types behind "/types". Grouped or not, the bump cannot
-    # go green without rewriting those configs and test/tsconfig.json onto the
-    # new cloudflarePool API. Patch updates still come through; lift these when
-    # that migration is done.
+    # The Cloudflare stack moves as one piece, and it is currently pinned by
+    # @cloudflare/vitest-pool-workers 0.9.14: it depends on wrangler at an exact
+    # 4.44.0, whose peer range wants @cloudflare/workers-types ^4, and it peers
+    # vitest at 2.0.x - 3.2.x. So nothing here can advance alone — a newer
+    # wrangler wants workers-types ^5, which the pool's nested wrangler refuses.
+    #
+    # Moving the pool is the unlock, and it is a migration rather than a bump:
+    # 0.20 dropped the "/config" export and defineWorkersProject with it, which
+    # all three vitest configs import, and moved the cloudflare:test types behind
+    # "/types". Lift all four of these together once that is done.
+    #
+    # Patch updates still come through, which is what carries a security fix.
     ignore:
       - dependency-name: '@cloudflare/vitest-pool-workers'
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+      - dependency-name: wrangler
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
       - dependency-name: vitest
+        update-types:
+          - version-update:semver-major
+      - dependency-name: '@cloudflare/workers-types'
         update-types:
           - version-update:semver-major
