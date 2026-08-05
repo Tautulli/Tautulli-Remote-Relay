@@ -7,7 +7,7 @@ import {
   parseQuotaRequest,
   parseValidateRequest,
 } from './schema';
-import { QuotaCounter, USAGE_ID_PREFIX_LENGTH, parseDailyLimit } from './quota';
+import { QuotaCounter, USAGE_ID_PREFIX_LENGTH, buildDecision, parseDailyLimit } from './quota';
 import type { QuotaDecision } from './quota';
 import type { Env, RateLimits, RateLimiter } from './types';
 
@@ -181,7 +181,18 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
 
   const result = await sendFcmMessage(env, buildMessage(token, platform, data), false);
   if (result.ok) {
-    const recorded = await stub.record(platform, hashPrefix);
+    // Accounting must never break delivery. FCM has the message; a Durable
+    // Object failure here would otherwise reach the top-level catch and report
+    // a delivered notification as a 500. Fall back to the pre-send decision with
+    // this send counted, which is what record() would have returned.
+    let recorded = buildDecision(decision.used + 1, decision.maximum, true, Date.now());
+    try {
+      recorded = await stub.record(platform, hashPrefix);
+    } catch (error) {
+      console.error(
+        `quota record failed ${hashPrefix}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
     console.log(`notify ok ${hashPrefix}`);
     return json(200, { status: 'ok', rateLimits: toRateLimits(recorded) });
   }

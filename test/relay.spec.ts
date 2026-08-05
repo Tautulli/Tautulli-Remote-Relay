@@ -1,5 +1,6 @@
-import { SELF, fetchMock } from 'cloudflare:test';
+import { SELF, env, fetchMock } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import worker from '../src/index';
 import { resetTokenCacheForTests } from '../src/fcm';
 import { TEST_DATA, TEST_TOKEN } from './fixtures';
 import { JSON_HEADERS, captureFcm, lastCaptured, mockFcm, mockOauth, notify, quota, validate } from './helpers';
@@ -125,6 +126,53 @@ describe('POST /v1/notify — validation', () => {
     expect((await send('2001:db8::1')).status).toBe(200);
     expect((await send('::ffff:203.0.113.7')).status).toBe(200);
     expect((await send('203.0.113.7')).status).toBe(200);
+  });
+
+  it('still reports success when the quota write fails after delivery', async () => {
+    mockOauth();
+    mockFcm(200, { name: 'projects/relay-test-project/messages/1' });
+
+    // FCM already has the message, so a Durable Object failure must not turn a
+    // delivered notification into a 500 the sender records as a failure.
+    const broken = {
+      ...env,
+      QUOTA: {
+        idFromName: (name: string) => env.QUOTA.idFromName(name),
+        get: (id: never) => ({
+          check: () => env.QUOTA.get(id).check(),
+          record: () => Promise.reject(new Error('durable object unavailable')),
+        }),
+      },
+    } as unknown as Parameters<typeof worker.fetch>[1];
+
+    const before = (await (await quota()).json()) as { rateLimits: { used: number } };
+
+    // Calling the handler directly rather than through SELF, so the env can carry
+    // a failing QUOTA binding. Content-Length has to be set by hand: the runtime
+    // adds it when a request is actually sent, and readJsonBody requires it.
+    const payload = JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA });
+    const response = await worker.fetch(
+      new Request('https://relay.test/v1/notify', {
+        method: 'POST',
+        headers: {
+          ...JSON_HEADERS,
+          'CF-Connecting-IP': '203.0.113.44',
+          'Content-Length': String(new TextEncoder().encode(payload).length),
+        },
+        body: payload,
+      }),
+      broken,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string; rateLimits: { used: number } };
+    expect(body.status).toBe('ok');
+    // Reported as counted, from the pre-send check.
+    expect(body.rateLimits.used).toBe(before.rateLimits.used + 1);
+
+    // ...but the write really did fail, so the stored count is unchanged.
+    const after = (await (await quota()).json()) as { rateLimits: { used: number } };
+    expect(after.rateLimits.used).toBe(before.rateLimits.used);
   });
 
   it('gives each source its own burst budget for the same token', async () => {
