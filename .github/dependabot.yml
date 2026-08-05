@@ -18,9 +18,26 @@ updates:
     commit-message:
       prefix: deps
     groups:
-      # wrangler, vitest and the workers types move together; separate PRs for
-      # them tend to fail against each other.
+      # vitest belongs in this group despite not being a Cloudflare package:
+      # @cloudflare/vitest-pool-workers declares a peer range on it, so bumping
+      # either one alone fails to resolve. wrangler and the workers types track
+      # the same runtime and are kept with them.
       cloudflare:
         patterns:
           - wrangler
+          - vitest
           - '@cloudflare/*'
+    # @cloudflare/vitest-pool-workers 0.20 dropped its "/config" export and with
+    # it defineWorkersProject, which all three vitest configs import, and moved
+    # the cloudflare:test types behind "/types". Grouped or not, the bump cannot
+    # go green without rewriting those configs and test/tsconfig.json onto the
+    # new cloudflarePool API. Patch updates still come through; lift these when
+    # that migration is done.
+    ignore:
+      - dependency-name: '@cloudflare/vitest-pool-workers'
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+      - dependency-name: vitest
+        update-types:
+          - version-update:semver-major
