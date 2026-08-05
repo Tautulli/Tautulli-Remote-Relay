@@ -30,8 +30,9 @@ All request and response bodies are JSON. Requests must have `Content-Type: appl
 | `400` | Schema violation, or FCM rejected the message as invalid (`code: "INVALID_ARGUMENT"`). |
 | `410` | `code: "UNREGISTERED"`. The token is dead (app uninstalled, token rotated) or belongs to a different Firebase project. Stop using it. |
 | `413` | Request body or `data` over the size cap. |
-| `429` | `code: "RATE_LIMITED"`. Per-IP, burst, or daily limit. Retry after `Retry-After` seconds. |
+| `429` | `code: "RATE_LIMITED"`. Retry after `Retry-After` seconds. A daily limit refusal carries `rateLimits`; a per-IP or burst refusal does not, which is how the two are told apart. |
 | `502` | `code: "FCM_ERROR"`. FCM errored or was unreachable. Transient, keep the token. |
+| `500` | `code: "INTERNAL"`. Unexpected relay error. Transient, keep the token. |
 
 Only a `410` means the token should be discarded. Every other error is retryable, including a bare `404` from FCM without an `UNREGISTERED` code.
 
