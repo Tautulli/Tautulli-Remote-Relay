@@ -75,8 +75,9 @@ function assertJsonRequest(request: Request): void {
  * bodies.
  *
  * A missing or unparsable Content-Length is treated as over the cap rather than
- * waved through: `Number('')` is 0 and `Number.isFinite(NaN)` is false, so
- * trusting the header only rejects a caller honest enough to declare the size.
+ * waved through, so the header cannot be omitted to skip the check.
+ * `Number.isInteger` is the guard rather than `isFinite`, since it also rejects
+ * a fractional length; an empty header is caught before it reaches either.
  */
 async function readJsonBody(request: Request): Promise<unknown> {
   const declared = request.headers.get('Content-Length')?.trim();
@@ -238,28 +239,23 @@ async function handleQuota(request: Request, env: Env): Promise<Response> {
   }
   const { token } = parseQuotaRequest(await readJsonBody(request));
   const tokenHash = await sha256Hex(token);
-  const decision = await quotaStub(env, tokenHash).peek();
+  const decision = await quotaStub(env, tokenHash).check();
   console.log(`quota ${tokenHash.slice(0, USAGE_ID_PREFIX_LENGTH)} used=${decision.used}`);
   return json(200, { status: 'ok', rateLimits: toRateLimits(decision) });
 }
 
 function handleHealth(env: Env, includeBody: boolean): Response {
   const limit = parseDailyLimit(env.DAILY_LIMIT);
-  const body = {
+  const response = json(200, {
     status: 'ok',
     rateLimits: { enforced: limit !== null, maximum: limit },
     // Lets a self-hosted deployment detect that it forgot to wire the rate-limit
     // bindings (they are optional, and checkLimiter fails open without them).
     limitersConfigured: Boolean(env.NOTIFY_IP_LIMIT && env.NOTIFY_BURST && env.LOOKUP_LIMIT),
-  };
-  // A HEAD probe wants the status line, not a body.
-  if (!includeBody) {
-    return new Response(null, {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-    });
-  }
-  return json(200, body);
+  });
+  // A HEAD probe wants the status line, not a body, but HTTP says the headers
+  // should match the GET, so reuse them rather than hand-rolling a subset.
+  return includeBody ? response : new Response(null, { status: 200, headers: response.headers });
 }
 
 export default {

@@ -65,10 +65,12 @@ function requirePlatform(body: Record<string, unknown>, optional = false): Platf
   if (optional && platform === undefined) {
     return 'android';
   }
-  if (platform !== 'android' && platform !== 'ios') {
-    throw new SchemaError('"platform" must be "android" or "ios"');
+  // Checked against PLATFORMS rather than a repeated literal list, so the type it
+  // derives, this validator and the message cannot disagree on what is accepted.
+  if (typeof platform !== 'string' || !(PLATFORMS as readonly string[]).includes(platform)) {
+    throw new SchemaError(`"platform" must be one of: ${PLATFORMS.map((p) => `"${p}"`).join(', ')}`);
   }
-  return platform;
+  return platform as Platform;
 }
 
 function asObject(value: unknown, label: string): Record<string, unknown> {

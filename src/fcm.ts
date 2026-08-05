@@ -254,11 +254,17 @@ export function buildMessage(token: string, platform: Platform, data: Record<str
       },
     };
   }
-  return {
-    token,
-    data: { payload },
-    android: { priority: 'HIGH', ttl: `${MESSAGE_LIFETIME_SECONDS}s` },
-  };
+  if (platform === 'android') {
+    return {
+      token,
+      data: { payload },
+      android: { priority: 'HIGH', ttl: `${MESSAGE_LIFETIME_SECONDS}s` },
+    };
+  }
+  // Adding a member to PLATFORMS without a branch here is a compile error, rather
+  // than that platform silently receiving the Android message shape.
+  const unhandled: never = platform;
+  throw new Error(`unhandled platform: ${String(unhandled)}`);
 }
 
 interface FcmErrorBody {
@@ -297,8 +303,9 @@ export async function sendFcmMessage(
     response = await postToFcm(env, account, message, validateOnly);
     if (response.status === 401) {
       // The cached OAuth token was rejected — drop it and mint a fresh one
-      // once. Only 401 (UNAUTHENTICATED) means a stale token; 403 is a
-      // different, terminal condition handled below and must not retry.
+      // once. Only 401 (UNAUTHENTICATED) means a stale token. A 403 never does,
+      // so it must not re-mint; it is classified below, terminal only with
+      // SENDER_ID_MISMATCH and retryable otherwise.
       await invalidateAccessToken(env);
       response = await postToFcm(env, account, message, validateOnly);
     }

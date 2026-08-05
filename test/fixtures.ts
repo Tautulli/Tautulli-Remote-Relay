@@ -40,7 +40,7 @@ export const TEST_SERVICE_ACCOUNT = JSON.stringify({
   token_uri: 'https://oauth2.googleapis.com/token',
 });
 
-/** A structurally plausible FCM registration token (length is what's validated). */
+/** A structurally plausible FCM registration token (length and charset are validated). */
 export const TEST_TOKEN =
   'dGVzdC1mY20tdG9rZW4:APA91b' + 'x'.repeat(140);
 

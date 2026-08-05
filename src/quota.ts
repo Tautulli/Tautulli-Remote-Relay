@@ -123,11 +123,6 @@ export class QuotaCounter extends DurableObject<Env> {
     return buildDecision(state.count, parseDailyLimit(this.env.DAILY_LIMIT), true, now);
   }
 
-  /** Read the current day's state without counting anything. */
-  async peek(): Promise<QuotaDecision> {
-    return this.check();
-  }
-
   /**
    * Post-midnight flush so a device that stops sending still reports its final
    * day. record() also flushes lazily on the first request of a new day, so a

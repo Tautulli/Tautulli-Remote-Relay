@@ -39,9 +39,13 @@ describe('/v1/health', () => {
     });
   });
 
-  it('answers HEAD probes with 200 (the reachability idiom the app uses)', async () => {
+  it('answers HEAD probes with 200 and the same headers as the GET', async () => {
     const response = await SELF.fetch('https://relay.test/v1/health', { method: 'HEAD' });
     expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/json');
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    // HEAD used to hand-roll a header subset and drop this one.
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
   });
 
   it('sets no-store and nosniff on JSON responses', async () => {
@@ -353,8 +357,7 @@ describe('POST /v1/validate', () => {
     const response = await validate({ token: TEST_TOKEN, platform: 'android' });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'ok', valid: true });
-    const raw = captured[captured.length - 1]!;
-    expect(JSON.parse(raw)).toMatchObject({ validate_only: true });
+    expect(lastCaptured(captured)).toMatchObject({ validate_only: true });
   });
 
   it('returns 410 invalid for an unregistered token', async () => {
