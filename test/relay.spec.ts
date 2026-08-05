@@ -4,6 +4,9 @@ import { resetTokenCacheForTests } from '../src/fcm';
 import { TEST_DATA, TEST_TOKEN } from './fixtures';
 import { JSON_HEADERS, captureFcm, lastCaptured, mockFcm, mockOauth, notify, quota, validate } from './helpers';
 
+/** Mirrors the NOTIFY_BURST limiter in wrangler.toml. */
+const NOTIFY_BURST_LIMIT = 30;
+
 // This project runs in monitor mode (DAILY_LIMIT = "0" from wrangler.toml).
 // Enforced-cap behavior is covered by test/enforced.spec.ts, which runs the
 // same worker with DAILY_LIMIT = "2".
@@ -106,12 +109,12 @@ describe('POST /v1/notify — validation', () => {
     expect(response.status).toBe(413);
   });
 
-  it('keys the per-IP limiter on the /64 so one prefix cannot mint budgets', async () => {
-    // Two hosts in one prefix share a bucket, and an IPv4 address is untouched.
-    // All three are well under the limit, so this asserts the key is computed
-    // without error rather than that a limit fired.
+  it('accepts every shape of client address the limiter key has to handle', async () => {
+    // Full IPv6, an elided run, IPv4-mapped and plain IPv4. All are under the
+    // limit, so this asserts only that the key is built without error for each
+    // shape, not that the /64 truncation produces the right value.
     mockOauth();
-    mockFcm(200, { name: 'projects/relay-test-project/messages/1' }, 3);
+    mockFcm(200, { name: 'projects/relay-test-project/messages/1' }, 4);
     const send = (ip: string) =>
       SELF.fetch('https://relay.test/v1/notify', {
         method: 'POST',
@@ -119,7 +122,32 @@ describe('POST /v1/notify — validation', () => {
         body: JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA }),
       });
     expect((await send('2001:db8:1:2:3:4:5:6')).status).toBe(200);
-    expect((await send('2001:db8:1:2:aaaa:bbbb:cc:dd')).status).toBe(200);
+    expect((await send('2001:db8::1')).status).toBe(200);
+    expect((await send('::ffff:203.0.113.7')).status).toBe(200);
+    expect((await send('203.0.113.7')).status).toBe(200);
+  });
+
+  it('gives each source its own burst budget for the same token', async () => {
+    // A third party holding the token must not be able to spend the budget the
+    // paired Tautulli draws from. NOTIFY_BURST is 30/60s (wrangler.toml), and a
+    // refusal happens before FCM is called, so exactly 31 sends reach FCM: 30
+    // from the first address plus one from the second.
+    mockOauth();
+    mockFcm(200, { name: 'projects/relay-test-project/messages/1' }, NOTIFY_BURST_LIMIT + 1);
+    const send = (ip: string) =>
+      SELF.fetch('https://relay.test/v1/notify', {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, 'CF-Connecting-IP': ip },
+        body: JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA }),
+      });
+
+    const other = '198.51.100.9';
+    for (let i = 0; i < NOTIFY_BURST_LIMIT; i++) {
+      expect((await send(other)).status).toBe(200);
+    }
+    expect((await send(other)).status).toBe(429);
+
+    // The paired server, on its own address, still has its full budget.
     expect((await send('203.0.113.7')).status).toBe(200);
   });
 

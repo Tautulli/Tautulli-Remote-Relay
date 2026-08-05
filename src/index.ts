@@ -156,7 +156,12 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   // support report, a log line and a usage row all name the device identically.
   const hashPrefix = tokenHash.slice(0, USAGE_ID_PREFIX_LENGTH);
 
-  if (!(await checkLimiter(env.NOTIFY_BURST, tokenHash))) {
+  // Keyed on token AND source: on the token alone, anyone holding it drains the
+  // same bucket the paired Tautulli draws from, and the server's notifications
+  // are refused. Sending to a device is what the token grants; stopping the
+  // paired server from sending is not. Volume stays bounded by the per-IP limit
+  // above, which is what that limit is for.
+  if (!(await checkLimiter(env.NOTIFY_BURST, `${tokenHash}:${clientIp(request)}`))) {
     console.warn(`notify burst ${hashPrefix}`);
     return rateLimited('burst limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
