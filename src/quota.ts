@@ -166,7 +166,7 @@ export class QuotaCounter extends DurableObject<Env> {
       });
     } catch (error) {
       // Usage collection must never break delivery.
-      console.error(`quota flush failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      console.error(`quota flush failed ${idPrefix}: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 

@@ -157,6 +157,7 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   const hashPrefix = tokenHash.slice(0, USAGE_ID_PREFIX_LENGTH);
 
   if (!(await checkLimiter(env.NOTIFY_BURST, tokenHash))) {
+    console.warn(`notify burst ${hashPrefix}`);
     return rateLimited('burst limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
 
@@ -167,6 +168,7 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   const stub = quotaStub(env, tokenHash);
   const decision = await stub.check();
   if (!decision.allowed) {
+    console.warn(`notify over-limit ${hashPrefix} used=${decision.used}`);
     return rateLimited('daily notification limit reached', secondsUntil(decision.resetsAt), {
       rateLimits: toRateLimits(decision),
     });
@@ -180,10 +182,10 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   }
   switch (result.kind) {
     case 'unregistered':
-      console.log(`notify unregistered ${hashPrefix}`);
+      console.warn(`notify unregistered ${hashPrefix}`);
       return json(410, { status: 'error', code: 'UNREGISTERED' });
     case 'invalid_argument':
-      console.log(`notify invalid ${hashPrefix}`);
+      console.error(`notify invalid ${hashPrefix}: ${result.detail}`);
       return json(400, { status: 'error', code: 'INVALID_ARGUMENT', detail: result.detail });
     default:
       console.error(`notify fcm-error ${hashPrefix}: ${result.detail}`);
@@ -197,13 +199,19 @@ async function handleValidate(request: Request, env: Env): Promise<Response> {
     return rateLimited('per-IP request limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
   const { token, platform } = parseValidateRequest(await readJsonBody(request));
+  const hashPrefix = (await sha256Hex(token)).slice(0, USAGE_ID_PREFIX_LENGTH);
   const result = await sendFcmMessage(env, buildMessage(token, platform, {}), true);
   if (result.ok) {
+    console.log(`validate ok ${hashPrefix}`);
     return json(200, { status: 'ok', valid: true });
   }
   if (result.kind === 'unregistered' || result.kind === 'invalid_argument') {
+    // A Tautulli acts on this by dropping the device out of its notifier list,
+    // so it is the outcome most worth having a record of.
+    console.warn(`validate unregistered ${hashPrefix}`);
     return json(410, { status: 'error', valid: false });
   }
+  console.error(`validate fcm-error ${hashPrefix}: ${result.detail}`);
   return json(502, { status: 'error', code: 'FCM_ERROR', detail: result.detail });
 }
 
@@ -213,7 +221,9 @@ async function handleQuota(request: Request, env: Env): Promise<Response> {
     return rateLimited('per-IP request limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
   const { token } = parseQuotaRequest(await readJsonBody(request));
-  const decision = await quotaStub(env, await sha256Hex(token)).peek();
+  const tokenHash = await sha256Hex(token);
+  const decision = await quotaStub(env, tokenHash).peek();
+  console.log(`quota ${tokenHash.slice(0, USAGE_ID_PREFIX_LENGTH)} used=${decision.used}`);
   return json(200, { status: 'ok', rateLimits: toRateLimits(decision) });
 }
 
@@ -260,7 +270,7 @@ export default {
       if (error instanceof PayloadTooLargeError) {
         return json(413, { status: 'error', code: 'PAYLOAD_TOO_LARGE', detail: error.message });
       }
-      console.error(`unhandled error: ${error instanceof Error ? error.message : 'unknown'}`);
+      console.error(`unhandled error ${request.method} ${pathname}: ${error instanceof Error ? error.message : 'unknown'}`);
       return json(500, { status: 'error', code: 'INTERNAL' });
     }
   },

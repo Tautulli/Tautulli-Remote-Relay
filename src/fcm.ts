@@ -307,8 +307,10 @@ export async function sendFcmMessage(
     // service-account secret, an OAuth-exchange failure (revoked key), or a
     // network fault reaching Google. All are transient or operator-side from
     // the caller's view, so surface a retryable FCM_ERROR, never an opaque 500.
+    // Not logged here: both callers report this detail with the device attached,
+    // and a bad service-account secret fails every request, so logging twice
+    // would double the volume exactly when the log matters.
     const detail = error instanceof Error ? error.message : 'unknown FCM transport error';
-    console.error(`fcm transport error: ${detail}`);
     return { ok: false, kind: 'error', detail };
   }
 
