@@ -67,13 +67,13 @@ npm install
 wrangler secret put FCM_SERVICE_ACCOUNT                   # staging
 wrangler secret put FCM_SERVICE_ACCOUNT --env production  # production
 
-npm run deploy:staging     # workers.dev
+npm run deploy:staging     # no URL unless workers_dev is on
 npm run deploy:production  # relay.tautulliremote.com
 ```
 
 To change the daily limit, edit `DAILY_LIMIT` in `wrangler.toml` and deploy. The change applies immediately.
 
-Usage data is written to the `tautulli_relay_usage` Analytics Engine dataset. Each row is a day, platform, hashed device prefix, and count. No tokens, payloads, or IPs are recorded.
+Usage data is written to the `tautulli_relay_usage` Analytics Engine dataset, or `tautulli_relay_usage_staging` from a staging deploy. Each row is a day, platform, hashed device prefix, and count. No tokens, payloads, or IPs are recorded.
 
 ## Self-hosting
 

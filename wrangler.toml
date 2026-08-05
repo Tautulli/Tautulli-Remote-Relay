@@ -1,8 +1,9 @@
 # Tautulli Remote push relay.
 #
 # The top-level configuration is the STAGING deployment (`npm run deploy:staging`),
-# served from workers.dev. Production (`npm run deploy:production`) is the
-# [env.production] section below, bound to relay.tautulliremote.com.
+# which has no reachable URL unless workers_dev below is turned on. Production
+# (`npm run deploy:production`) is the [env.production] section below, bound to
+# relay.tautulliremote.com.
 #
 # Secrets (set per environment, never committed):
 #   wrangler secret put FCM_SERVICE_ACCOUNT                  # staging
@@ -80,6 +81,10 @@ simple = { limit = 60, period = 60 }
 # Optional OAuth token cache shared across isolates. The relay works without it
 # (in-memory caching only); create a KV namespace and fill in the id to enable:
 #   wrangler kv namespace create OAUTH_CACHE
+# Note: this writes a live FCM access token to KV in plaintext for the hour it is
+# valid, readable by any credential holding Workers KV read. FCM_SERVICE_ACCOUNT
+# is a secret that cannot be read back, so enabling this weakens the protection
+# on what is derived from it.
 # [[kv_namespaces]]
 # binding = "OAUTH_CACHE"
 # id = "<namespace id>"
@@ -129,6 +134,7 @@ name = "LOOKUP_LIMIT"
 namespace_id = "2002"
 simple = { limit = 60, period = 60 }
 
+# Optional OAuth token cache; read the note on the staging binding above first.
 # [[env.production.kv_namespaces]]
 # binding = "OAUTH_CACHE"
 # id = "<namespace id>"
