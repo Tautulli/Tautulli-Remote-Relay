@@ -52,16 +52,18 @@ dataset = "tautulli_relay_usage_staging"
 # Rate limiters. Requires wrangler >= 4.36.0 (the [[ratelimits]] key).
 # `period` accepts only 10 or 60 seconds.
 #
-# NOTIFY_IP_LIMIT is the one that bounds flooding: the token-keyed burst guard
-# alone gives every fresh (junk) token its own budget, so only a per-IP ceiling
-# caps an unauthenticated caller. Sized well above any real Tautulli server,
-# which sends a handful of notifications per minute.
+# NOTIFY_IP_LIMIT is the one that bounds flooding: the burst guard alone gives
+# every fresh (junk) token its own budget, so only a per-IP ceiling caps an
+# unauthenticated caller. Sized well above any real Tautulli server, which sends
+# a handful of notifications per minute.
 [[ratelimits]]
 name = "NOTIFY_IP_LIMIT"
 namespace_id = "1000"
 simple = { limit = 300, period = 60 }
 
-# Burst guard: per-token-hash, applied to /v1/notify before the quota counter.
+# Burst guard: per token hash AND source address, so a third party holding the
+# token cannot spend the budget the paired Tautulli draws from. Applied to
+# /v1/notify before the quota counter.
 [[ratelimits]]
 name = "NOTIFY_BURST"
 namespace_id = "1001"

@@ -87,20 +87,20 @@ describe('QuotaCounter storage lifecycle', () => {
       (instance as unknown as { env: { USAGE: unknown } }).env.USAGE = {
         writeDataPoint: (point: { blobs?: unknown[]; indexes?: unknown[] }) => rows.push(point),
       };
-      // A completed day carrying the prefix record() persisted for it.
-      await state.storage.put({
-        day: '2020-01-01',
-        count: 3,
-        platform: 'android',
-        idPrefix: TEST_ID_PREFIX,
-      });
-      // Rolling onto today flushes 2020-01-01.
-      await instance.record('android', TEST_ID_PREFIX);
+      // record() is the only thing that writes platform and idPrefix, so let it
+      // write them rather than seeding storage: a seeded prefix would be flushed
+      // even if record() stopped persisting one.
+      await instance.record('ios', TEST_ID_PREFIX);
+      // Age the day it just wrote, leaving what it persisted alongside.
+      await state.storage.put({ day: '2020-01-01', count: 3 });
+      // Rolling onto today flushes 2020-01-01 from stored state.
+      await instance.record('ios', TEST_ID_PREFIX);
       return state.id.toString();
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.blobs).toEqual(['2020-01-01', 'android', TEST_ID_PREFIX]);
+    // Both the platform and the prefix here came from record(), not the test.
+    expect(rows[0]?.blobs).toEqual(['2020-01-01', 'ios', TEST_ID_PREFIX]);
     expect(rows[0]?.indexes).toEqual([TEST_ID_PREFIX]);
     // The id cannot be read off ctx.id, so a row built from it is unusable for
     // correlation. Guards against reintroducing that.

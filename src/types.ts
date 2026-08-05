@@ -21,7 +21,7 @@ export interface Env {
   OAUTH_CACHE?: KVNamespace;
   /** Per-IP limit for /v1/notify — the one that bounds junk-token flooding. Optional (absent in tests). */
   NOTIFY_IP_LIMIT?: RateLimiter;
-  /** Burst guard for /v1/notify, keyed by token hash. Optional (absent in tests). */
+  /** Burst guard for /v1/notify, keyed by token hash and source. Optional (absent in tests). */
   NOTIFY_BURST?: RateLimiter;
   /** Per-IP limit for /v1/validate and /v1/quota. Optional (absent in tests). */
   LOOKUP_LIMIT?: RateLimiter;

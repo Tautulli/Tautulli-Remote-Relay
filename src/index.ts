@@ -144,9 +144,9 @@ function quotaStub(env: Env, tokenHash: string): DurableObjectStub<QuotaCounter>
 
 async function handleNotify(request: Request, env: Env): Promise<Response> {
   assertJsonRequest(request);
-  // Per-IP limit FIRST: the token-keyed burst guard alone bounds nothing
-  // against junk tokens (each fresh token gets a fresh budget), so an IP limit
-  // is what caps flooding of an endpoint that calls FCM.
+  // Per-IP limit FIRST: the burst guard alone bounds nothing against junk tokens
+  // (each fresh token gets a fresh budget), so an IP limit is what caps flooding
+  // of an endpoint that calls FCM.
   if (!(await checkLimiter(env.NOTIFY_IP_LIMIT, clientIp(request)))) {
     return rateLimited('per-IP request limit exceeded', BURST_RETRY_AFTER_SECONDS);
   }
