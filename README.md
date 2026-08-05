@@ -9,7 +9,8 @@ The official instance runs at `https://relay.tautulliremote.com`.
 - The relay stores no device registry, no tokens, and no notification content. The only persistent state is a per-device daily send counter, keyed by a SHA-256 hash of the token.
 - Notification content is encrypted by the user's Tautulli server with a key that only it and the device know. The relay forwards the envelope without being able to read it.
 - There is no API key. The FCM token is the credential: it is unguessable, scoped to this app's Firebase project, and only lets you send notifications to that one device.
-- Each accepted send counts against a per-device daily limit. The relay currently runs in monitor mode (`DAILY_LIMIT=0`) and refuses nothing while usage data establishes a fair cap. Per-IP and per-token rate limits are always active.
+- Each accepted send counts against a per-device daily limit. The relay currently runs in monitor mode (`DAILY_LIMIT=0`) and refuses nothing while usage data establishes a fair cap.
+- Rate limiting runs in two places. `/v1/notify`, `/v1/validate` and `/v1/quota` carry per-IP and per-token limits in the relay. Zone rules on the hostname cap requests per address before they reach it, covering `/v1/health` and undefined paths.
 
 ## API
 
