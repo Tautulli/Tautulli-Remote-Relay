@@ -4,7 +4,12 @@ import { TEST_SERVICE_ACCOUNT } from './test/fixtures';
 export default defineWorkersProject({
   test: {
     name: 'monitor',
-    include: ['test/quota.spec.ts', 'test/quota-do.spec.ts', 'test/relay.spec.ts'],
+    include: [
+      'test/client-ip.spec.ts',
+      'test/quota.spec.ts',
+      'test/quota-do.spec.ts',
+      'test/relay.spec.ts',
+    ],
     poolOptions: {
       workers: {
         wrangler: { configPath: './wrangler.toml' },

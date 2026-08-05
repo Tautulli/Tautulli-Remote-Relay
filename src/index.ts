@@ -107,7 +107,7 @@ async function checkLimiter(limiter: RateLimiter | undefined, key: string): Prom
  * attacker 2^64 independent budgets and makes the per-IP ceiling — the only
  * control that bounds an unauthenticated caller — mean nothing.
  */
-function clientIp(request: Request): string {
+export function clientIp(request: Request): string {
   const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
   // A dot means IPv4, plain or IPv4-mapped; truncating those would put every
   // IPv4 client in one bucket, which is the opposite of the fix.
