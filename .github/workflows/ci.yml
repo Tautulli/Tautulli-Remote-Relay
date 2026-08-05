@@ -1,0 +1,70 @@
+name: CI
+
+# Checks run on every push and pull request. Deployment runs only for a push to
+# main, or on demand, and only after the checks pass.
+#
+# This repository is public. `pull_request` (not `pull_request_target`) is
+# deliberate: a pull request from a fork runs with a read-only token and no
+# access to secrets, so untrusted code can never reach the Cloudflare
+# credential. Nothing in the deploy job is reachable from a fork, because a fork
+# cannot push to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [production, staging]
+        default: production
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Type check and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    name: Deploy
+    needs: check
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # A push to main deploys production. A manual run deploys whichever
+      # environment was chosen. Staging has workers_dev off, so it deploys with
+      # no reachable URL unless that is turned on first.
+      - name: Deploy worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          if [ "$TARGET" = "staging" ]; then
+            npx wrangler deploy
+          else
+            npx wrangler deploy --env production
+          fi
