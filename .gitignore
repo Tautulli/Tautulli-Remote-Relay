@@ -3,7 +3,14 @@ node_modules/
 dist/
 
 # Local secrets — the FCM service account must never enter this repo.
+# Firebase names its download <project-id>-firebase-adminsdk-<hash>.json, and
+# wrangler reads local secrets from .env as well as .dev.vars.
 .dev.vars
 .dev.vars.*
+.env
+.env.*
 *service-account*.json
+*firebase-adminsdk*.json
 *.pem
+*.p8
+*.key

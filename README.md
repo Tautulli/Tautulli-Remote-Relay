@@ -62,7 +62,8 @@ Requires:
 npm install
 
 # One-time, per environment: the Firebase service-account JSON
-# (IAM role: Firebase Cloud Messaging API Sender).
+# (IAM role: Firebase Cloud Messaging API Sender). Paste it at the prompt, or
+# pipe it in. Keep the downloaded file outside this directory either way.
 wrangler secret put FCM_SERVICE_ACCOUNT                   # staging
 wrangler secret put FCM_SERVICE_ACCOUNT --env production  # production
 
