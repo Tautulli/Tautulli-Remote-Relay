@@ -49,7 +49,7 @@ describe('QuotaCounter storage lifecycle', () => {
       await state.storage.put({ day: '2020-01-01', count: 42, platform: 'android' });
     });
 
-    const decision = await stub.record('android');
+    const decision = await stub.record('android', TEST_ID_PREFIX);
     expect(decision.used).toBe(1);
 
     const stored = await runInDurableObject(stub, async (_instance, state) => ({
@@ -83,7 +83,8 @@ describe('QuotaCounter storage lifecycle', () => {
     const rows: { blobs?: unknown[]; indexes?: unknown[] }[] = [];
 
     const derivedId = await runInDurableObject(stub, async (instance, state) => {
-      (instance.env as { USAGE?: unknown }).USAGE = {
+      // env is protected on DurableObject, so the capture reaches past it.
+      (instance as unknown as { env: { USAGE: unknown } }).env.USAGE = {
         writeDataPoint: (point: { blobs?: unknown[]; indexes?: unknown[] }) => rows.push(point),
       };
       // A completed day carrying the prefix record() persisted for it.
