@@ -11,6 +11,9 @@ function stubFor(name: string): DurableObjectStub<QuotaCounter> {
   return env.QUOTA.get(env.QUOTA.idFromName(name)) as DurableObjectStub<QuotaCounter>;
 }
 
+/** Stands in for SHA-256(token).slice(0, USAGE_ID_PREFIX_LENGTH). */
+const TEST_ID_PREFIX = '1514eb454a58f37f';
+
 describe('QuotaCounter storage lifecycle', () => {
   it('check() writes nothing, so an unknown token leaves no durable state', async () => {
     const stub = stubFor('probe-check-only');
@@ -28,7 +31,7 @@ describe('QuotaCounter storage lifecycle', () => {
 
   it('record() persists the count and arms a flush alarm', async () => {
     const stub = stubFor('probe-record');
-    await stub.record('android');
+    await stub.record('android', TEST_ID_PREFIX);
 
     const stored = await runInDurableObject(stub, async (_instance, state) => ({
       day: await state.storage.get('day'),
@@ -75,11 +78,39 @@ describe('QuotaCounter storage lifecycle', () => {
     expect(stored.count).toBe(0);
   });
 
+  it('reports the hashed-token prefix to Analytics Engine, not the derived id', async () => {
+    const stub = stubFor('probe-usage-id');
+    const rows: { blobs?: unknown[]; indexes?: unknown[] }[] = [];
+
+    const derivedId = await runInDurableObject(stub, async (instance, state) => {
+      (instance.env as { USAGE?: unknown }).USAGE = {
+        writeDataPoint: (point: { blobs?: unknown[]; indexes?: unknown[] }) => rows.push(point),
+      };
+      // A completed day carrying the prefix record() persisted for it.
+      await state.storage.put({
+        day: '2020-01-01',
+        count: 3,
+        platform: 'android',
+        idPrefix: TEST_ID_PREFIX,
+      });
+      // Rolling onto today flushes 2020-01-01.
+      await instance.record('android', TEST_ID_PREFIX);
+      return state.id.toString();
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.blobs).toEqual(['2020-01-01', 'android', TEST_ID_PREFIX]);
+    expect(rows[0]?.indexes).toEqual([TEST_ID_PREFIX]);
+    // The id cannot be read off ctx.id, so a row built from it is unusable for
+    // correlation. Guards against reintroducing that.
+    expect(derivedId.slice(0, TEST_ID_PREFIX.length)).not.toBe(TEST_ID_PREFIX);
+  });
+
   it('re-arms the alarm when record() already rolled the day over', async () => {
     const stub = stubFor('probe-alarm-rearm');
     // record() arms the alarm; firing it now reproduces the production case
     // where a post-midnight send performed the rollover before the alarm ran.
-    await stub.record('android');
+    await stub.record('android', TEST_ID_PREFIX);
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
     const stored = await runInDurableObject(stub, async (_instance, state) => ({

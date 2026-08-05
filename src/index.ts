@@ -176,7 +176,7 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
 
   const result = await sendFcmMessage(env, buildMessage(token, platform, data), false);
   if (result.ok) {
-    const recorded = await stub.record(platform);
+    const recorded = await stub.record(platform, hashPrefix);
     console.log(`notify ok ${hashPrefix}`);
     return json(200, { status: 'ok', rateLimits: toRateLimits(recorded) });
   }

@@ -26,6 +26,12 @@ interface QuotaState {
   day: string | undefined;
   count: number;
   platform: string | undefined;
+  /**
+   * SHA-256(token) prefix, persisted by record() so an alarm-driven flush has it
+   * too. It cannot be read off ctx.id: the name passed to idFromName is not
+   * propagated into the object, and id.toString() is a different, derived value.
+   */
+  idPrefix: string | undefined;
 }
 
 export interface QuotaDecision extends RateLimits {
@@ -84,7 +90,7 @@ export class QuotaCounter extends DurableObject<Env> {
   }
 
   /** Count one accepted delivery. Called only after FCM accepts the message. */
-  async record(platform: string): Promise<QuotaDecision> {
+  async record(platform: string, idPrefix: string): Promise<QuotaDecision> {
     const now = Date.now();
     const today = utcDayKey(now);
     const state = await this.loadState();
@@ -103,7 +109,13 @@ export class QuotaCounter extends DurableObject<Env> {
 
     state.count += 1;
     state.platform = platform;
-    await this.ctx.storage.put({ day: state.day, count: state.count, platform: state.platform });
+    state.idPrefix = idPrefix;
+    await this.ctx.storage.put({
+      day: state.day,
+      count: state.count,
+      platform: state.platform,
+      idPrefix: state.idPrefix,
+    });
     if (completedDay) {
       await this.flushCompletedDay(completedDay);
     }
@@ -145,11 +157,12 @@ export class QuotaCounter extends DurableObject<Env> {
   }
 
   private async loadState(): Promise<QuotaState> {
-    const entries = await this.ctx.storage.get(['day', 'count', 'platform']);
+    const entries = await this.ctx.storage.get(['day', 'count', 'platform', 'idPrefix']);
     return {
       day: entries.get('day') as string | undefined,
       count: (entries.get('count') as number | undefined) ?? 0,
       platform: entries.get('platform') as string | undefined,
+      idPrefix: entries.get('idPrefix') as string | undefined,
     };
   }
 
@@ -157,7 +170,9 @@ export class QuotaCounter extends DurableObject<Env> {
     if (state.day === undefined || state.count === 0 || this.env.USAGE === undefined) {
       return;
     }
-    const idPrefix = (this.ctx.id.name ?? this.ctx.id.toString()).slice(0, USAGE_ID_PREFIX_LENGTH);
+    // A device that last sent before idPrefix was persisted has none stored. The
+    // derived id keeps the count in the dataset; only the correlation is lost.
+    const idPrefix = state.idPrefix ?? this.ctx.id.toString().slice(0, USAGE_ID_PREFIX_LENGTH);
     try {
       this.env.USAGE.writeDataPoint({
         blobs: [state.day, state.platform ?? 'unknown', idPrefix],
