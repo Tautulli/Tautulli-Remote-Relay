@@ -1,7 +1,9 @@
-import { SELF, fetchMock } from 'cloudflare:test';
+import { SELF, env, fetchMock } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import worker from '../src/index';
 import { resetTokenCacheForTests } from '../src/fcm';
-import { mockFcm, mockOauth, notify, quota } from './helpers';
+import { TEST_DATA, TEST_TOKEN } from './fixtures';
+import { JSON_HEADERS, mockFcm, mockOauth, notify, quota } from './helpers';
 
 // This project runs the same worker with DAILY_LIMIT = "2" (see
 // vitest.enforced.config.ts) to exercise the enforced-cap path.
@@ -70,5 +72,45 @@ describe('with DAILY_LIMIT=2', () => {
     expect(recovered.status).toBe(200);
     const body = (await recovered.json()) as { rateLimits: { used: number } };
     expect(body.rateLimits.used).toBe(1);
+  });
+
+  it('reports the pre-send count when the quota write fails after delivery', async () => {
+    mockOauth();
+    mockFcm(200, { name: 'ok' }, 2);
+    await notify();
+
+    const broken = {
+      ...env,
+      QUOTA: {
+        idFromName: (name: string) => env.QUOTA.idFromName(name),
+        get: (id: never) => ({
+          check: () => env.QUOTA.get(id).check(),
+          record: () => Promise.reject(new Error('durable object unavailable')),
+        }),
+      },
+    } as unknown as Parameters<typeof worker.fetch>[1];
+
+    // Called directly so the env can carry a failing QUOTA binding; see the
+    // monitor-mode version in relay.spec.ts for why Content-Length is set by hand.
+    const payload = JSON.stringify({ token: TEST_TOKEN, platform: 'android', data: TEST_DATA });
+    const response = await worker.fetch(
+      new Request('https://relay.test/v1/notify', {
+        method: 'POST',
+        headers: {
+          ...JSON_HEADERS,
+          'CF-Connecting-IP': '203.0.113.45',
+          'Content-Length': String(new TextEncoder().encode(payload).length),
+        },
+        body: payload,
+      }),
+      broken,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { rateLimits: Record<string, unknown> };
+    // Enforced mode read the counter before sending, so it can report this send.
+    expect(body.rateLimits).toMatchObject({ enforced: true, maximum: 2, used: 2, remaining: 0 });
+    const stored = (await (await quota()).json()) as { rateLimits: { used: number } };
+    expect(stored.rateLimits.used).toBe(1);
   });
 });

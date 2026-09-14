@@ -132,18 +132,20 @@ describe('POST /v1/notify — validation', () => {
     expect((await send('203.0.113.7')).status).toBe(200);
   });
 
-  it('still reports success when the quota write fails after delivery', async () => {
+  it('delivers when the Durable Object is unavailable, without reading the counter first', async () => {
     mockOauth();
     mockFcm(200, { name: 'projects/relay-test-project/messages/1' });
 
-    // FCM already has the message, so a Durable Object failure must not turn a
-    // delivered notification into a 500 the sender records as a failure.
+    // Monitor mode has no cap to enforce, so it must not call check() at all;
+    // one that did would turn this unavailable Durable Object into a lost
+    // notification. FCM then has the message, so the failed write must not turn
+    // a delivered notification into a 500 the sender records as a failure.
     const broken = {
       ...env,
       QUOTA: {
         idFromName: (name: string) => env.QUOTA.idFromName(name),
-        get: (id: never) => ({
-          check: () => env.QUOTA.get(id).check(),
+        get: () => ({
+          check: () => Promise.reject(new Error('check() called in monitor mode')),
           record: () => Promise.reject(new Error('durable object unavailable')),
         }),
       },
@@ -169,10 +171,10 @@ describe('POST /v1/notify — validation', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { status: string; rateLimits: { used: number } };
+    const body = (await response.json()) as { status: string; rateLimits: { used: number | null } };
     expect(body.status).toBe('ok');
-    // Reported as counted, from the pre-send check.
-    expect(body.rateLimits.used).toBe(before.rateLimits.used + 1);
+    // Nothing was read before the send, so the count is unknown rather than guessed.
+    expect(body.rateLimits.used).toBeNull();
 
     // ...but the write really did fail, so the stored count is unchanged.
     const after = (await (await quota()).json()) as { rateLimits: { used: number } };

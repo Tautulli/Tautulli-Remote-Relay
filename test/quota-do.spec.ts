@@ -69,13 +69,42 @@ describe('QuotaCounter storage lifecycle', () => {
 
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
-    const stored = await runInDurableObject(stub, async (_instance, state) => ({
-      day: await state.storage.get('day'),
-      count: await state.storage.get('count'),
-    }));
+    const day = await runInDurableObject(stub, (_instance, state) => state.storage.get('day'));
     // `put({day: undefined})` would silently skip the key; it must be deleted.
-    expect(stored.day).toBeUndefined();
-    expect(stored.count).toBe(0);
+    expect(day).toBeUndefined();
+    // The old count stays in storage, but without a day it no longer counts.
+    expect((await stub.check()).used).toBe(0);
+    expect((await stub.record('android', TEST_ID_PREFIX)).used).toBe(1);
+  });
+
+  it('writes only the keys that changed, since each one is a billed row write', async () => {
+    const stub = stubFor('probe-changed-keys');
+    const writes = await runInDurableObject(stub, async (instance, state) => {
+      const keys: string[][] = [];
+      const put = state.storage.put.bind(state.storage);
+      state.storage.put = ((entries: Record<string, unknown>) => {
+        keys.push(Object.keys(entries).sort());
+        return put(entries);
+      }) as typeof state.storage.put;
+
+      await instance.record('android', TEST_ID_PREFIX);
+      await instance.record('android', TEST_ID_PREFIX);
+      await instance.record('ios', TEST_ID_PREFIX);
+      await state.storage.delete('day');
+      await instance.record('ios', TEST_ID_PREFIX);
+      return keys;
+    });
+
+    expect(writes).toEqual([
+      // First send: nothing stored yet.
+      ['count', 'day', 'idPrefix', 'platform'],
+      // Same day, same device: the count is all that moved.
+      ['count'],
+      ['count', 'platform'],
+      // A new day rewrites the day, not the unchanged platform or prefix.
+      ['count', 'day'],
+    ]);
+    expect((await stub.check()).used).toBe(1);
   });
 
   it('reports the hashed-token prefix to Analytics Engine, not the derived id', async () => {

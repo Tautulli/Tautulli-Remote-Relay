@@ -170,10 +170,14 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   // check() is read-only: an unknown/junk token that FCM will reject leaves no
   // durable state behind, and a device over its enforced cap is refused with no
   // FCM call. The counter is incremented (record) only after FCM accepts, so
-  // failed deliveries never burn a device's daily allowance.
+  // failed deliveries never burn a device's daily allowance. Without a limit
+  // check() can never refuse, so monitor mode skips it: one Durable Object
+  // request per send instead of two, and delivery no longer depends on the
+  // Durable Object being reachable.
+  const limit = parseDailyLimit(env.DAILY_LIMIT);
   const stub = quotaStub(env, tokenHash);
-  const decision = await stub.check();
-  if (!decision.allowed) {
+  const decision = limit === null ? null : await stub.check();
+  if (decision && !decision.allowed) {
     console.warn(`notify over-limit ${hashPrefix} used=${decision.used}`);
     return rateLimited('daily notification limit reached', secondsUntil(decision.resetsAt), {
       rateLimits: toRateLimits(decision),
@@ -184,18 +188,21 @@ async function handleNotify(request: Request, env: Env): Promise<Response> {
   if (result.ok) {
     // Accounting must never break delivery. FCM has the message; a Durable
     // Object failure here would otherwise reach the top-level catch and report
-    // a delivered notification as a 500. Fall back to the pre-send decision with
-    // this send counted, which is what record() would have returned.
-    let recorded = buildDecision(decision.used + 1, decision.maximum, true, Date.now());
+    // a delivered notification as a 500. Fall back to the pre-send count with
+    // this send added, which is what record() would have returned. Monitor mode
+    // took no pre-send count, so there the count is reported as unknown.
+    let rateLimits: Omit<RateLimits, 'used'> & { used: number | null };
     try {
-      recorded = await stub.record(platform, hashPrefix);
+      rateLimits = toRateLimits(await stub.record(platform, hashPrefix));
     } catch (error) {
       console.error(
         `quota record failed ${hashPrefix}: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
+      const fallback = toRateLimits(buildDecision((decision?.used ?? 0) + 1, limit, true, Date.now()));
+      rateLimits = decision ? fallback : { ...fallback, used: null };
     }
     console.log(`notify ok ${hashPrefix}`);
-    return json(200, { status: 'ok', rateLimits: toRateLimits(recorded) });
+    return json(200, { status: 'ok', rateLimits });
   }
   switch (result.kind) {
     case 'unregistered':

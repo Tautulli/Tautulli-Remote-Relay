@@ -26,7 +26,7 @@ All request and response bodies are JSON. Requests must have `Content-Type: appl
 
 | Status | Meaning |
 |---|---|
-| `200` | Forwarded to FCM. Body includes `rateLimits: {enforced, maximum, used, remaining, resetsAt}`. `maximum` and `remaining` are `null` in monitor mode. |
+| `200` | Forwarded to FCM. Body includes `rateLimits: {enforced, maximum, used, remaining, resetsAt}`. `maximum` and `remaining` are `null` in monitor mode, and so is `used` when the send was delivered but could not be counted. |
 | `400` | Schema violation, or FCM rejected the message as invalid (`code: "INVALID_ARGUMENT"`). |
 | `410` | `code: "UNREGISTERED"`. The token is dead (app uninstalled, token rotated) or belongs to a different Firebase project. Stop using it. |
 | `413` | Request body or `data` over the size cap. |

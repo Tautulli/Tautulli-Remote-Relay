@@ -108,14 +108,19 @@ export class QuotaCounter extends DurableObject<Env> {
     }
 
     state.count += 1;
-    state.platform = platform;
-    state.idPrefix = idPrefix;
-    await this.ctx.storage.put({
-      day: state.day,
-      count: state.count,
-      platform: state.platform,
-      idPrefix: state.idPrefix,
-    });
+    // Each key in a put() is billed as a row written, the first free-plan limit
+    // the relay reaches. On most sends only the count has changed.
+    const changes: Record<string, string | number> = { count: state.count };
+    if (completedDay) {
+      changes.day = today;
+    }
+    if (state.platform !== platform) {
+      changes.platform = state.platform = platform;
+    }
+    if (state.idPrefix !== idPrefix) {
+      changes.idPrefix = state.idPrefix = idPrefix;
+    }
+    await this.ctx.storage.put(changes);
     if (completedDay) {
       await this.flushCompletedDay(completedDay);
     }
@@ -136,9 +141,10 @@ export class QuotaCounter extends DurableObject<Env> {
       // Clear the completed-day marker BEFORE the fire-and-forget flush, so an
       // auto-retried alarm (workerd re-runs the handler on throw) cannot flush
       // the same day twice. `put` silently skips undefined values, so the key
-      // must be deleted explicitly rather than set to undefined.
+      // must be deleted explicitly rather than set to undefined. Nothing else
+      // needs resetting: without a day, check() reads zero and record() starts
+      // the count over.
       await this.ctx.storage.delete('day');
-      await this.ctx.storage.put({ count: 0, platform: state.platform ?? 'unknown' });
       await this.flushCompletedDay(completedDay);
       return;
     }
