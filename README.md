@@ -6,11 +6,13 @@ The official instance runs at `https://relay.tautulliremote.com`.
 
 ## How it works
 
-- The relay stores no device registry, no tokens, and no notification content. The only persistent state is a per-device daily send counter, keyed by a SHA-256 hash of the token.
+- The relay stores no device registry, no tokens, and no notification content. It keeps one record per device, keyed by a SHA-256 hash of the token: the UTC day being counted, that day's delivered-send count, the platform, and a 16-character hashed token prefix. The record is deleted once the device goes 30 full UTC days without a delivered notification.
+- Each completed day's count is written to Workers Analytics Engine as a day, platform, 16-character hashed token prefix, and count, and kept there for three months.
+- Logs carry only request outcomes, hashed token prefixes, and an identifier-free line for each idle record deleted. They are kept for Cloudflare's Workers Logs retention: 3 days on the Free plan, 7 on Paid. Invocation logs, which would record client IPs, are disabled.
 - Notification content is encrypted by the user's Tautulli server with a key that only it and the device know. The relay forwards the envelope without being able to read it.
 - There is no API key. The FCM token is the credential: it is unguessable, scoped to this app's Firebase project, and only lets you send notifications to that one device.
 - Each accepted send counts against a per-device daily limit. The relay currently runs in monitor mode (`DAILY_LIMIT=0`) and refuses nothing while usage data establishes a fair cap.
-- Rate limiting runs in two places. `/v1/notify`, `/v1/validate` and `/v1/quota` carry per-IP and per-token limits in the relay. Zone rules on the hostname cap requests per address before they reach it, covering `/v1/health` and undefined paths.
+- Rate limiting runs in two places. `/v1/notify`, `/v1/validate`, and `/v1/quota` carry per-IP and per-token limits in the relay. Zone rules on the hostname cap requests per address before they reach it, covering `/v1/health` and undefined paths.
 
 ## API
 

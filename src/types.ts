@@ -1,4 +1,4 @@
-import type { QuotaCounter } from './quota';
+import type { DeviceQuota } from './quota';
 
 /**
  * The Workers Rate Limiting binding. Declared locally so the relay does not
@@ -14,7 +14,7 @@ export interface Env {
   /** "0"/unset = monitor mode (count, never refuse); positive integer = enforced daily cap. */
   DAILY_LIMIT?: string;
   /** Per-token daily quota counters. */
-  QUOTA: DurableObjectNamespace<QuotaCounter>;
+  QUOTA: DurableObjectNamespace<DeviceQuota>;
   /** Usage-distribution collection (hashed token prefix + daily count). Optional. */
   USAGE?: AnalyticsEngineDataset;
   /** Optional cross-isolate OAuth token cache. */

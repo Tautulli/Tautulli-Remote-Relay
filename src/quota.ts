@@ -18,8 +18,12 @@ import type { Env, RateLimits } from './types';
  * fair-use limit that is preferable to charging devices for failures.
  *
  * Completed days are flushed to Analytics Engine as {day, platform, hashed id
- * prefix, count} — the distribution used to choose the enforced cap later. No
- * tokens, payloads, or IPs are ever stored.
+ * prefix, count} — the distribution used to choose the enforced cap later — and
+ * kept there for three months. The object's own record is deleted once the
+ * device goes 30 full UTC days without a delivered notification: each
+ * post-midnight flush re-arms the alarm 30 days out, and a delivery before then
+ * pulls it back to the next midnight. No tokens, payloads, or IPs are ever
+ * stored.
  */
 
 interface QuotaState {
@@ -42,6 +46,8 @@ export interface QuotaDecision extends RateLimits {
 export const USAGE_ID_PREFIX_LENGTH = 16;
 /** Spread post-midnight flush alarms over this window to avoid a thundering herd. */
 const ALARM_JITTER_WINDOW_MS = 10 * 60 * 1000;
+/** An idle device's record is deleted this long after its last day is flushed. */
+const IDLE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function parseDailyLimit(raw: string | undefined): number | null {
   if (raw === undefined) {
@@ -76,7 +82,7 @@ export function buildDecision(
   };
 }
 
-export class QuotaCounter extends DurableObject<Env> {
+export class DeviceQuota extends DurableObject<Env> {
   /**
    * Read-only pre-send check. Writes nothing, so an unknown or junk token
    * leaves no durable state behind when the send that follows fails.
@@ -131,12 +137,22 @@ export class QuotaCounter extends DurableObject<Env> {
   /**
    * Post-midnight flush so a device that stops sending still reports its final
    * day. record() also flushes lazily on the first request of a new day, so a
-   * missed alarm only delays the data point.
+   * missed alarm only delays the data point. The flush then re-arms the alarm
+   * as the idle purge, which deletes the whole record.
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
     const state = await this.loadState();
-    if (state.day !== undefined && state.day !== utcDayKey(now)) {
+    if (state.day === undefined) {
+      // Nothing has been delivered since the flush that armed this alarm, so the
+      // device has been idle for IDLE_RETENTION_MS. (A retry of a flush that
+      // failed to re-arm lands here too, which only purges early.)
+      await this.ctx.storage.deleteAll();
+      // No identifier: the record is gone, and the line only shows purges run.
+      console.log('quota idle purge');
+      return;
+    }
+    if (state.day !== utcDayKey(now)) {
       const completedDay = { ...state };
       // Clear the completed-day marker BEFORE the fire-and-forget flush, so an
       // auto-retried alarm (workerd re-runs the handler on throw) cannot flush
@@ -146,13 +162,17 @@ export class QuotaCounter extends DurableObject<Env> {
       // the count over.
       await this.ctx.storage.delete('day');
       await this.flushCompletedDay(completedDay);
+      // A delivery before this fires pulls it back to the next midnight
+      // (ensureFlushAlarm), so it only fires for a device that has gone idle.
+      // The re-arm costs one more billed row write per active device-day.
+      await this.ctx.storage.setAlarm(now + IDLE_RETENTION_MS);
       return;
     }
     // record() already rolled the day over before this alarm fired, so the day
     // now in storage is still in progress. Re-arm: without this the one-shot
     // alarm is consumed and a device whose last-ever send happened in that
     // window would never flush its final day.
-    if (state.day !== undefined && state.count > 0) {
+    if (state.count > 0) {
       await this.ctx.storage.setAlarm(nextUtcMidnightMs(now) + this.deterministicJitterMs());
     }
   }
@@ -168,12 +188,12 @@ export class QuotaCounter extends DurableObject<Env> {
   }
 
   private async flushCompletedDay(state: QuotaState): Promise<void> {
-    if (state.day === undefined || state.count === 0 || this.env.USAGE === undefined) {
+    // Every DeviceQuota object starts in record(), which stores idPrefix with
+    // every new day, so a day without one cannot arise.
+    const idPrefix = state.idPrefix;
+    if (state.day === undefined || state.count === 0 || idPrefix === undefined || this.env.USAGE === undefined) {
       return;
     }
-    // A device that last sent before idPrefix was persisted has none stored. The
-    // derived id keeps the count in the dataset; only the correlation is lost.
-    const idPrefix = state.idPrefix ?? this.ctx.id.toString().slice(0, USAGE_ID_PREFIX_LENGTH);
     try {
       this.env.USAGE.writeDataPoint({
         blobs: [state.day, state.platform ?? 'unknown', idPrefix],
@@ -187,11 +207,14 @@ export class QuotaCounter extends DurableObject<Env> {
   }
 
   private async ensureFlushAlarm(nowMs: number): Promise<void> {
+    const flushAt = nextUtcMidnightMs(nowMs) + this.deterministicJitterMs();
     const existing = await this.ctx.storage.getAlarm();
-    if (existing !== null) {
+    // A later alarm is the idle purge, which a delivery pulls back to the next
+    // midnight (setAlarm replaces it). An earlier one fires first and re-arms.
+    if (existing !== null && existing <= flushAt) {
       return;
     }
-    await this.ctx.storage.setAlarm(nextUtcMidnightMs(nowMs) + this.deterministicJitterMs());
+    await this.ctx.storage.setAlarm(flushAt);
   }
 
   private deterministicJitterMs(): number {
@@ -201,5 +224,18 @@ export class QuotaCounter extends DurableObject<Env> {
       hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
     }
     return hash % ALARM_JITTER_WINDOW_MS;
+  }
+}
+
+/**
+ * The retired pre-v2 class. It stays exported only because Cloudflare refuses
+ * to delete a class in the same deploy that moves its binding away; the v3
+ * migration deletes it, with every object in it, in the next deploy. Nothing
+ * binds to it, so the only way into an old object is an alarm it armed before
+ * the switch, and that alarm deletes the object's storage instead of throwing.
+ */
+export class QuotaCounter extends DurableObject<Env> {
+  override async alarm(): Promise<void> {
+    await this.ctx.storage.deleteAll();
   }
 }

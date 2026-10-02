@@ -1,20 +1,50 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import type { QuotaCounter } from '../src/quota';
+import { nextUtcMidnightMs, utcDayKey } from '../src/quota';
+import type { DeviceQuota } from '../src/quota';
 
 /**
  * Direct Durable Object tests for the stateful parts the HTTP tests cannot
- * reach: day rollover, the Analytics Engine flush, and alarm re-arming.
+ * reach: day rollover, the Analytics Engine flush, alarm re-arming, and the
+ * idle purge.
  */
 
-function stubFor(name: string): DurableObjectStub<QuotaCounter> {
-  return env.QUOTA.get(env.QUOTA.idFromName(name)) as DurableObjectStub<QuotaCounter>;
+function stubFor(name: string): DurableObjectStub<DeviceQuota> {
+  return env.QUOTA.get(env.QUOTA.idFromName(name)) as DurableObjectStub<DeviceQuota>;
 }
 
 /** Stands in for SHA-256(token).slice(0, USAGE_ID_PREFIX_LENGTH). */
 const TEST_ID_PREFIX = '1514eb454a58f37f';
+/** The retention the README promises; deliberately not read from the source. */
+const IDLE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const FLUSH_JITTER_WINDOW_MS = 10 * 60 * 1000;
 
-describe('QuotaCounter storage lifecycle', () => {
+/** Everything the object holds: its stored keys and any pending alarm. */
+function storedState(stub: DurableObjectStub<DeviceQuota>) {
+  return runInDurableObject(stub, async (_instance, state) => ({
+    entries: Object.fromEntries(await state.storage.list()),
+    alarm: await state.storage.getAlarm(),
+  }));
+}
+
+function expectMidnightFlush(alarm: number | null): void {
+  const midnight = nextUtcMidnightMs(Date.now());
+  expect(alarm).toBeGreaterThanOrEqual(midnight);
+  expect(alarm).toBeLessThan(midnight + FLUSH_JITTER_WINDOW_MS);
+}
+
+/**
+ * Takes a device into its idle window the way production does: record()
+ * writes what a real device has, the day is aged, and the midnight alarm
+ * flushes it, leaving only the idle purge pending.
+ */
+async function flushToIdle(stub: DurableObjectStub<DeviceQuota>): Promise<void> {
+  await stub.record('android', TEST_ID_PREFIX);
+  await runInDurableObject(stub, (_instance, state) => state.storage.put('day', '2020-01-01'));
+  expect(await runDurableObjectAlarm(stub)).toBe(true);
+}
+
+describe('DeviceQuota storage lifecycle', () => {
   it('check() writes nothing, so an unknown token leaves no durable state', async () => {
     const stub = stubFor('probe-check-only');
     const decision = await stub.check();
@@ -60,21 +90,51 @@ describe('QuotaCounter storage lifecycle', () => {
     expect(stored.count).toBe(1);
   });
 
-  it('clears the day key when the alarm flushes a completed day', async () => {
+  it('clears only the day key and arms the idle purge when the alarm flushes a completed day', async () => {
     const stub = stubFor('probe-alarm-flush');
     await runInDurableObject(stub, async (_instance, state) => {
-      await state.storage.put({ day: '2020-01-01', count: 7, platform: 'android' });
+      await state.storage.put({ day: '2020-01-01', count: 7, platform: 'android', idPrefix: TEST_ID_PREFIX });
       await state.storage.setAlarm(Date.now() + 1000);
     });
 
+    const before = Date.now();
     expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const after = Date.now();
 
-    const day = await runInDurableObject(stub, (_instance, state) => state.storage.get('day'));
+    const stored = await storedState(stub);
     // `put({day: undefined})` would silently skip the key; it must be deleted.
-    expect(day).toBeUndefined();
+    // The rest stays through the idle window, so a returning device rewrites
+    // only its count and day.
+    expect(stored.entries).toEqual({ count: 7, platform: 'android', idPrefix: TEST_ID_PREFIX });
+    // The idle purge, not another midnight flush.
+    expect(stored.alarm).toBeGreaterThanOrEqual(before + IDLE_RETENTION_MS);
+    expect(stored.alarm).toBeLessThanOrEqual(after + IDLE_RETENTION_MS);
     // The old count stays in storage, but without a day it no longer counts.
     expect((await stub.check()).used).toBe(0);
     expect((await stub.record('android', TEST_ID_PREFIX)).used).toBe(1);
+  });
+
+  it('flushes a completed day from the alarm and re-arms it 30 days out', async () => {
+    const stub = stubFor('probe-alarm-usage');
+    const rows: { blobs?: unknown[]; doubles?: unknown[] }[] = [];
+
+    const before = Date.now();
+    const alarm = await runInDurableObject(stub, async (instance, state) => {
+      // env is protected on DurableObject, so the capture reaches past it.
+      (instance as unknown as { env: { USAGE: unknown } }).env.USAGE = {
+        writeDataPoint: (point: { blobs?: unknown[]; doubles?: unknown[] }) => rows.push(point),
+      };
+      await state.storage.put({ day: '2020-01-01', count: 7, platform: 'android', idPrefix: TEST_ID_PREFIX });
+      await instance.alarm();
+      return state.storage.getAlarm();
+    });
+    const after = Date.now();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.blobs).toEqual(['2020-01-01', 'android', TEST_ID_PREFIX]);
+    expect(rows[0]?.doubles).toEqual([7]);
+    expect(alarm).toBeGreaterThanOrEqual(before + IDLE_RETENTION_MS);
+    expect(alarm).toBeLessThanOrEqual(after + IDLE_RETENTION_MS);
   });
 
   it('writes only the keys that changed, since each one is a billed row write', async () => {
@@ -105,6 +165,28 @@ describe('QuotaCounter storage lifecycle', () => {
       ['count', 'day'],
     ]);
     expect((await stub.check()).used).toBe(1);
+  });
+
+  it('keeps the pending flush alarm on same-day sends, since setAlarm is a billed row write too', async () => {
+    const stub = stubFor('probe-alarm-writes');
+    const calls = await runInDurableObject(stub, async (instance, state) => {
+      let count = 0;
+      const setAlarm = state.storage.setAlarm.bind(state.storage);
+      state.storage.setAlarm = ((...args: Parameters<typeof setAlarm>) => {
+        count += 1;
+        return setAlarm(...args);
+      }) as typeof state.storage.setAlarm;
+
+      await instance.record('android', TEST_ID_PREFIX);
+      await instance.record('android', TEST_ID_PREFIX);
+      await instance.record('android', TEST_ID_PREFIX);
+      return count;
+    });
+
+    // Only the first send arms the flush; the rest find it already pending at
+    // exactly the same time, because the jitter is derived from the object id.
+    expect(calls).toBe(1);
+    expectMidnightFlush((await storedState(stub)).alarm);
   });
 
   it('reports the hashed-token prefix to Analytics Engine, not the derived id', async () => {
@@ -143,12 +225,51 @@ describe('QuotaCounter storage lifecycle', () => {
     await stub.record('android', TEST_ID_PREFIX);
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
-    const stored = await runInDurableObject(stub, async (_instance, state) => ({
-      count: await state.storage.get('count'),
-      alarm: await state.storage.getAlarm(),
-    }));
-    expect(stored.count).toBe(1);
+    const stored = await storedState(stub);
+    // A day in progress is not idle, so nothing is purged.
+    expect(stored.entries).toEqual({
+      day: utcDayKey(Date.now()),
+      count: 1,
+      platform: 'android',
+      idPrefix: TEST_ID_PREFIX,
+    });
     // Without re-arming, this device's final day would never be flushed.
-    expect(stored.alarm).not.toBeNull();
+    expectMidnightFlush(stored.alarm);
+  });
+
+  it('deletes everything when the idle purge fires', async () => {
+    const stub = stubFor('probe-idle-purge');
+    await flushToIdle(stub);
+    // Nothing delivered since the flush, so the pending alarm is the purge.
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    expect(await storedState(stub)).toEqual({ entries: {}, alarm: null });
+  });
+
+  it('pulls the idle purge back to the next midnight when the device sends again', async () => {
+    const stub = stubFor('probe-idle-return');
+    await flushToIdle(stub);
+    expect((await storedState(stub)).alarm).toBeGreaterThan(nextUtcMidnightMs(Date.now()) + FLUSH_JITTER_WINDOW_MS);
+
+    await stub.record('android', TEST_ID_PREFIX);
+    // Left 30 days out, the day in progress would miss its midnight flush.
+    expectMidnightFlush((await storedState(stub)).alarm);
+  });
+
+  it('starts a purged device over as a new one', async () => {
+    const stub = stubFor('probe-idle-restart');
+    await flushToIdle(stub);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect((await stub.check()).used).toBe(0);
+
+    expect((await stub.record('ios', TEST_ID_PREFIX)).used).toBe(1);
+    const stored = await storedState(stub);
+    expect(stored.entries).toEqual({
+      day: utcDayKey(Date.now()),
+      count: 1,
+      platform: 'ios',
+      idPrefix: TEST_ID_PREFIX,
+    });
+    expectMidnightFlush(stored.alarm);
   });
 });

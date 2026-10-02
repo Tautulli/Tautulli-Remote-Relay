@@ -7,11 +7,11 @@ import {
   parseQuotaRequest,
   parseValidateRequest,
 } from './schema';
-import { QuotaCounter, USAGE_ID_PREFIX_LENGTH, buildDecision, parseDailyLimit } from './quota';
+import { DeviceQuota, QuotaCounter, USAGE_ID_PREFIX_LENGTH, buildDecision, parseDailyLimit } from './quota';
 import type { QuotaDecision } from './quota';
 import type { Env, RateLimits, RateLimiter } from './types';
 
-export { QuotaCounter };
+export { DeviceQuota, QuotaCounter };
 
 /**
  * Stateless push relay for Tautulli Remote.
@@ -138,7 +138,7 @@ function rateLimited(detail: string, retryAfter: number, extra: Record<string, u
   );
 }
 
-function quotaStub(env: Env, tokenHash: string): DurableObjectStub<QuotaCounter> {
+function quotaStub(env: Env, tokenHash: string): DurableObjectStub<DeviceQuota> {
   return env.QUOTA.get(env.QUOTA.idFromName(tokenHash));
 }
 
