@@ -7,11 +7,11 @@ import {
   parseQuotaRequest,
   parseValidateRequest,
 } from './schema';
-import { DeviceQuota, QuotaCounter, USAGE_ID_PREFIX_LENGTH, buildDecision, parseDailyLimit } from './quota';
+import { DeviceQuota, USAGE_ID_PREFIX_LENGTH, buildDecision, parseDailyLimit } from './quota';
 import type { QuotaDecision } from './quota';
 import type { Env, RateLimits, RateLimiter } from './types';
 
-export { DeviceQuota, QuotaCounter };
+export { DeviceQuota };
 
 /**
  * Stateless push relay for Tautulli Remote.

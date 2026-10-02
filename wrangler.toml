@@ -43,18 +43,21 @@ class_name = "DeviceQuota"
 tag = "v1"
 new_sqlite_classes = ["QuotaCounter"]
 
-# v2 moves the QUOTA binding to a new class, so the quota objects created under
-# v1, whose counters never expired, can be deleted. Cloudflare refuses to delete
-# a class in the same deploy that moves the binding referencing it (API error
-# 10061, which a dry run cannot see), so QuotaCounter stays exported as a shim
-# (src/quota.ts) and a v3 migration deletes it in the NEXT deploy. Push the two
-# commits separately: a single push deploys only the newer one. Moving the
-# binding drops each device's unflushed count, so the deploy day's usage rows
-# undercount; deploying just after the post-midnight flushes (around 00:10 UTC)
-# keeps that small.
+# v2 moved the QUOTA binding to a new class so that v3 could delete the quota
+# objects created under v1, whose counters never expired. Cloudflare refuses to
+# delete a class in the same deploy that moves the binding referencing it (API
+# error 10061, which a dry run cannot see), so the two shipped in separate
+# deploys, with QuotaCounter kept exported as a shim in between. A single push
+# deploys only its newest commit, so the two commits had to be pushed one at a
+# time. Moving the binding dropped each device's unflushed count, so the deploy
+# day's usage rows undercount.
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["DeviceQuota"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["QuotaCounter"]
 
 # Per-device daily-count distribution (hashed token prefix + count only) used to
 # choose the eventual DAILY_LIMIT value. Queryable with the Analytics Engine SQL API.
@@ -130,11 +133,15 @@ class_name = "DeviceQuota"
 tag = "v1"
 new_sqlite_classes = ["QuotaCounter"]
 
-# Moves the binding off the v1 quota objects; read the note on the staging
-# migration above.
+# v2 moves the binding off the v1 quota objects and v3 deletes them; read the
+# note on the staging migrations above.
 [[env.production.migrations]]
 tag = "v2"
 new_sqlite_classes = ["DeviceQuota"]
+
+[[env.production.migrations]]
+tag = "v3"
+deleted_classes = ["QuotaCounter"]
 
 [[env.production.analytics_engine_datasets]]
 binding = "USAGE"

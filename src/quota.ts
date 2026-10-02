@@ -226,16 +226,3 @@ export class DeviceQuota extends DurableObject<Env> {
     return hash % ALARM_JITTER_WINDOW_MS;
   }
 }
-
-/**
- * The retired pre-v2 class. It stays exported only because Cloudflare refuses
- * to delete a class in the same deploy that moves its binding away; the v3
- * migration deletes it, with every object in it, in the next deploy. Nothing
- * binds to it, so the only way into an old object is an alarm it armed before
- * the switch, and that alarm deletes the object's storage instead of throwing.
- */
-export class QuotaCounter extends DurableObject<Env> {
-  override async alarm(): Promise<void> {
-    await this.ctx.storage.deleteAll();
-  }
-}
